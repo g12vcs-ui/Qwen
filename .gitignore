@@ -1,0 +1,71 @@
+```
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+build/
+target/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.py~
+*.py.class
+*.py.backup
+*.py.save
+*.py.swp
+*.py.swo
+*.py.tmp
+*.py.log
+*.py.cache
+*.py.compiled
+*.pyc~
+*.pyo~
+*.pyd~
+*.py~
+*.py.class~
+*.py.backup~
+*.py.save~
+*.py.swp~
+*.py.swo~
+*.py.tmp~
+*.py.log~
+*.py.cache~
+*.py.compiled~
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tmp
+
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.local
+*.env
+*.env.*
+!*.env.example
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+```
