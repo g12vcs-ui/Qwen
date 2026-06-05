@@ -1,19 +1,14 @@
-/**
- * Layer Model - Represents a single layer in the editor
- * Supports multiple layer types: image, text, shape, group
- */
+// PixelForge - Layer Model
 
 class Layer {
     constructor(options = {}) {
-        this.id = options.id || `layer_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        this.id = options.id || PFUtils.generateId();
         this.name = options.name || 'Layer';
-        this.type = options.type || 'image'; // image, text, shape, group, brush
-        this.visible = options.visible !== undefined ? options.visible : true;
-        this.locked = options.locked || false;
+        this.type = options.type || 'image'; // image, text, shape, group
+        this.visible = options.visible !== false;
+        this.locked = options.locked === true;
         this.opacity = options.opacity !== undefined ? options.opacity : 1;
         this.blendMode = options.blendMode || 'normal';
-        
-        // Transform properties
         this.x = options.x || 0;
         this.y = options.y || 0;
         this.width = options.width || 0;
@@ -24,9 +19,9 @@ class Layer {
         this.flipX = options.flipX || false;
         this.flipY = options.flipY || false;
         
-        // Content specific properties
-        this.image = options.image || null; // For image layers
-        this.text = options.text || ''; // For text layers
+        // Type-specific properties
+        this.image = options.image || null; // Image element for image layers
+        this.text = options.text || '';
         this.fontFamily = options.fontFamily || 'Arial';
         this.fontSize = options.fontSize || 24;
         this.fontWeight = options.fontWeight || 'normal';
@@ -43,53 +38,197 @@ class Layer {
         this.shadowOffsetY = options.shadowOffsetY || 0;
         
         // Shape properties
-        this.shapeType = options.shapeType || 'rectangle'; // rectangle, circle, line, polygon
+        this.shapeType = options.shapeType || 'rect'; // rect, ellipse, polygon
         this.cornerRadius = options.cornerRadius || 0;
-        this.points = options.points || []; // For polygons/custom shapes
-        this.dashPattern = options.dashPattern || null;
+        this.points = options.points || []; // For polygons
         
-        // Brush/drawing properties
-        this.brushSize = options.brushSize || 5;
-        this.brushHardness = options.brushHardness || 1;
-        
-        // Filter/adjustment properties
-        this.filters = {
-            brightness: options.brightness || 100,
-            contrast: options.contrast || 100,
-            saturation: options.saturation || 100,
+        // Adjustments
+        this.adjustments = {
+            brightness: options.brightness || 0,
+            contrast: options.contrast || 0,
+            saturation: options.saturation || 0,
             hue: options.hue || 0,
-            blur: options.blur || 0,
-            grayscale: options.grayscale || 0,
-            sepia: options.sepia || 0,
-            invert: options.invert || 0,
+            blur: options.blur || 0
         };
         
-        // Group children (for folder/group layers)
-        this.children = options.children || [];
-        this.isGroup = options.isGroup || false;
+        // Canvas for layer content
+        this.canvas = document.createElement('canvas');
+        this.ctx = this.canvas.getContext('2d');
         
-        // Mask support
-        this.mask = options.mask || null;
-        this.clippedBy = options.clippedBy || null;
+        // Dirty flag for re-rendering
+        this.dirty = true;
         
-        // Metadata
-        this.createdAt = Date.now();
-        this.updatedAt = Date.now();
+        // Initialize canvas size
+        this.updateCanvasSize();
     }
     
-    /**
-     * Clone the layer
-     */
-    clone() {
-        const data = this.toJSON();
-        data.id = `layer_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        data.name = `${this.name} copy`;
-        return new Layer(data);
+    updateCanvasSize() {
+        const padding = 10;
+        this.canvas.width = Math.max(this.width + padding * 2, 64);
+        this.canvas.height = Math.max(this.height + padding * 2, 64);
+        this.dirty = true;
     }
     
-    /**
-     * Convert layer to JSON for serialization
-     */
+    render() {
+        if (!this.dirty && !this.canvas_dirty) return;
+        
+        const ctx = this.ctx;
+        const w = this.canvas.width;
+        const h = this.canvas.height;
+        
+        ctx.clearRect(0, 0, w, h);
+        ctx.save();
+        
+        // Apply adjustments
+        if (this.type === 'image' && this.image) {
+            const filter = PFUtils.getFilterString(this.adjustments);
+            ctx.filter = filter;
+        }
+        
+        // Apply opacity
+        ctx.globalAlpha = this.opacity;
+        
+        // Apply blend mode
+        ctx.globalCompositeOperation = this.blendMode;
+        
+        const cx = w / 2;
+        const cy = h / 2;
+        
+        // Transform to center
+        ctx.translate(cx, cy);
+        ctx.rotate(this.rotation);
+        ctx.scale(this.flipX ? -1 : 1, this.flipY ? -1 : 1);
+        ctx.scale(this.scaleX, this.scaleY);
+        ctx.translate(-cx, -cy);
+        
+        const drawX = (w - this.width) / 2;
+        const drawY = (h - this.height) / 2;
+        
+        if (this.type === 'image' && this.image) {
+            ctx.drawImage(this.image, drawX, drawY, this.width, this.height);
+        } else if (this.type === 'text') {
+            this.renderText(ctx, drawX, drawY);
+        } else if (this.type === 'shape') {
+            this.renderShape(ctx, drawX, drawY);
+        }
+        
+        ctx.restore();
+        this.dirty = false;
+    }
+    
+    renderText(ctx, x, y) {
+        ctx.font = `${this.fontStyle} ${this.fontWeight} ${this.fontSize}px ${this.fontFamily}`;
+        ctx.textAlign = this.textAlign;
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = this.fillColor;
+        
+        // Shadow
+        if (this.shadowColor) {
+            ctx.shadowColor = this.shadowColor;
+            ctx.shadowBlur = this.shadowBlur;
+            ctx.shadowOffsetX = this.shadowOffsetX;
+            ctx.shadowOffsetY = this.shadowOffsetY;
+        }
+        
+        const lines = this.text.split('\n');
+        const lineHeight = this.fontSize * this.lineHeight;
+        
+        lines.forEach((line, i) => {
+            const lineY = y + i * lineHeight;
+            
+            // Stroke
+            if (this.strokeColor && this.strokeWidth > 0) {
+                ctx.strokeStyle = this.strokeColor;
+                ctx.lineWidth = this.strokeWidth;
+                ctx.strokeText(line, x, lineY);
+            }
+            
+            // Fill
+            ctx.fillText(line, x, lineY);
+        });
+        
+        // Reset shadow
+        ctx.shadowColor = 'transparent';
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+    }
+    
+    renderShape(ctx, x, y) {
+        ctx.fillStyle = this.fillColor;
+        ctx.strokeStyle = this.strokeColor || 'transparent';
+        ctx.lineWidth = this.strokeWidth;
+        
+        if (this.shapeType === 'rect') {
+            if (this.cornerRadius > 0) {
+                this.drawRoundedRect(ctx, x, y, this.width, this.height, this.cornerRadius);
+            } else {
+                ctx.fillRect(x, y, this.width, this.height);
+            }
+            if (this.strokeColor) ctx.strokeRect(x, y, this.width, this.height);
+        } else if (this.shapeType === 'ellipse') {
+            ctx.beginPath();
+            ctx.ellipse(x + this.width / 2, y + this.height / 2, this.width / 2, this.height / 2, 0, 0, Math.PI * 2);
+            ctx.fill();
+            if (this.strokeColor) ctx.stroke();
+        } else if (this.shapeType === 'polygon' && this.points.length > 2) {
+            ctx.beginPath();
+            ctx.moveTo(x + this.points[0].x * this.width, y + this.points[0].y * this.height);
+            for (let i = 1; i < this.points.length; i++) {
+                ctx.lineTo(x + this.points[i].x * this.width, y + this.points[i].y * this.height);
+            }
+            ctx.closePath();
+            ctx.fill();
+            if (this.strokeColor) ctx.stroke();
+        }
+    }
+    
+    drawRoundedRect(ctx, x, y, width, height, radius) {
+        const r = Math.min(radius, width / 2, height / 2);
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + width - r, y);
+        ctx.quadraticCurveTo(x + width, y, x + width, y + r);
+        ctx.lineTo(x + width, y + height - r);
+        ctx.quadraticCurveTo(x + width, y + height, x + width - r, y + height);
+        ctx.lineTo(x + r, y + height);
+        ctx.quadraticCurveTo(x, y + height, x, y + height - r);
+        ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y);
+        ctx.closePath();
+        ctx.fill();
+    }
+    
+    hitTest(px, py) {
+        // Transform point to local coordinates
+        const cx = this.x + this.width / 2;
+        const cy = this.y + this.height / 2;
+        
+        const cos = Math.cos(-this.rotation);
+        const sin = Math.sin(-this.rotation);
+        
+        const dx = px - cx;
+        const dy = py - cy;
+        
+        const localX = dx * cos - dy * sin;
+        const localY = dx * sin + dy * cos;
+        
+        const hw = (this.width * Math.abs(this.scaleX)) / 2;
+        const hh = (this.height * Math.abs(this.scaleY)) / 2;
+        
+        return localX >= -hw && localX <= hw && localY >= -hh && localY <= hh;
+    }
+    
+    getBounds() {
+        return {
+            x: this.x,
+            y: this.y,
+            width: this.width * Math.abs(this.scaleX),
+            height: this.height * Math.abs(this.scaleY),
+            rotation: this.rotation
+        };
+    }
+    
     toJSON() {
         return {
             id: this.id,
@@ -108,7 +247,7 @@ class Layer {
             scaleY: this.scaleY,
             flipX: this.flipX,
             flipY: this.flipY,
-            image: this.image ? this.image.toDataURL() : null,
+            image: this.image ? this.image.src : null,
             text: this.text,
             fontFamily: this.fontFamily,
             fontSize: this.fontSize,
@@ -127,61 +266,21 @@ class Layer {
             shapeType: this.shapeType,
             cornerRadius: this.cornerRadius,
             points: this.points,
-            dashPattern: this.dashPattern,
-            brushSize: this.brushSize,
-            brushHardness: this.brushHardness,
-            filters: { ...this.filters },
-            children: this.children.map(child => child.toJSON()),
-            isGroup: this.isGroup,
+            adjustments: { ...this.adjustments }
         };
     }
     
-    /**
-     * Create layer from JSON
-     */
-    static fromJSON(json) {
-        if (json.image && typeof json.image === 'string') {
-            // Create image element from data URL
+    static fromJSON(data) {
+        const layer = new Layer(data);
+        if (data.image) {
             const img = new Image();
-            img.src = json.image;
-            json.image = img;
+            img.src = data.image;
+            layer.image = img;
+            layer.width = layer.width || img.width;
+            layer.height = layer.height || img.height;
         }
-        if (json.children && json.children.length > 0) {
-            json.children = json.children.map(child => Layer.fromJSON(child));
-        }
-        return new Layer(json);
-    }
-    
-    /**
-     * Get bounding box considering transform
-     */
-    getBounds() {
-        return {
-            x: this.x,
-            y: this.y,
-            width: this.width * this.scaleX,
-            height: this.height * this.scaleY,
-        };
-    }
-    
-    /**
-     * Check if a point is inside the layer bounds
-     */
-    containsPoint(px, py) {
-        const bounds = this.getBounds();
-        return px >= bounds.x && px <= bounds.x + bounds.width &&
-               py >= bounds.y && py <= bounds.y + bounds.height;
-    }
-    
-    /**
-     * Update the timestamp
-     */
-    touch() {
-        this.updatedAt = Date.now();
+        return layer;
     }
 }
 
-// Export for module systems
-if (typeof module !== 'undefined' && module.exports) {
-    module.exports = Layer;
-}
+window.Layer = Layer;

@@ -1,58 +1,34 @@
-/**
- * State Management - Central state store for the editor
- * Handles project state, layers, selections, and settings
- */
+// PixelForge - State Management
 
 class State {
     constructor() {
-        // Canvas settings
         this.canvasWidth = 1920;
         this.canvasHeight = 1080;
         this.backgroundColor = '#ffffff';
-        
-        // Layers
         this.layers = [];
         this.selectedLayerIds = [];
-        this.activeLayerId = null;
-        
-        // Viewport
+        this.activeTool = 'move';
         this.zoom = 1;
         this.panX = 0;
         this.panY = 0;
-        
-        // Tool state
-        this.currentTool = 'move';
-        this.toolOptions = {};
-        
-        // Global adjustments (applied to final output)
-        this.adjustments = {
-            brightness: 100,
-            contrast: 100,
-            saturation: 100,
-            hue: 0,
-            blur: 0,
-        };
-        
-        // Snapping settings
+        this.showGrid = false;
         this.snapToGrid = false;
-        this.snapToGuides = true;
         this.gridSize = 20;
         
-        // Guides
-        this.guides = {
-            horizontal: [],
-            vertical: [],
+        // Tool options
+        this.brushSize = 10;
+        this.brushOpacity = 1;
+        this.fillColor = '#3b82f6';
+        this.strokeColor = '#1e40af';
+        
+        // Adjustments (global)
+        this.adjustments = {
+            brightness: 0,
+            contrast: 0,
+            saturation: 0,
+            hue: 0,
+            blur: 0
         };
-        
-        // Selection
-        this.selection = null; // { x, y, width, height }
-        
-        // Clipboard
-        this.clipboard = null;
-        
-        // Project metadata
-        this.projectName = 'Untitled';
-        this.lastSaved = null;
         
         // Event listeners
         this.listeners = {};
@@ -61,267 +37,211 @@ class State {
         this.loadFromStorage();
     }
     
-    /**
-     * Subscribe to state changes
-     */
-    subscribe(event, callback) {
+    on(event, callback) {
         if (!this.listeners[event]) {
             this.listeners[event] = [];
         }
         this.listeners[event].push(callback);
-        return () => this.unsubscribe(event, callback);
+        return () => this.off(event, callback);
     }
     
-    /**
-     * Unsubscribe from state changes
-     */
-    unsubscribe(event, callback) {
+    off(event, callback) {
         if (this.listeners[event]) {
             this.listeners[event] = this.listeners[event].filter(cb => cb !== callback);
         }
     }
     
-    /**
-     * Emit an event
-     */
     emit(event, data) {
         if (this.listeners[event]) {
             this.listeners[event].forEach(callback => callback(data));
         }
     }
     
-    /**
-     * Set a property and emit change event
-     */
-    set(key, value, emitChange = true) {
-        const oldValue = this[key];
-        this[key] = value;
-        if (emitChange) {
-            this.emit('change', { key, value, oldValue });
-        }
+    // Layer operations
+    addLayer(layer) {
+        this.layers.push(layer);
+        this.selectedLayerIds = [layer.id];
+        this.emit('layersChanged');
+        this.emit('selectionChanged');
+        this.saveToStorage();
+        return layer;
     }
     
-    /**
-     * Add a layer
-     */
-    addLayer(layer, index = -1, emitChange = true) {
-        if (index === -1 || index >= this.layers.length) {
-            this.layers.push(layer);
-        } else {
-            this.layers.splice(index, 0, layer);
-        }
-        this.setActiveLayer(layer.id);
-        if (emitChange) {
-            this.emit('layersChanged');
-            this.emit('change', { key: 'layers', value: this.layers });
-        }
-    }
-    
-    /**
-     * Remove a layer by ID
-     */
-    removeLayer(layerId, emitChange = true) {
+    removeLayer(layerId) {
         const index = this.layers.findIndex(l => l.id === layerId);
         if (index !== -1) {
             this.layers.splice(index, 1);
-            if (this.activeLayerId === layerId) {
-                this.activeLayerId = null;
-                this.selectedLayerIds = this.selectedLayerIds.filter(id => id !== layerId);
-            }
-            if (emitChange) {
-                this.emit('layersChanged');
-                this.emit('change', { key: 'layers', value: this.layers });
-            }
+            this.selectedLayerIds = this.selectedLayerIds.filter(id => id !== layerId);
+            this.emit('layersChanged');
+            this.emit('selectionChanged');
+            this.saveToStorage();
             return true;
         }
         return false;
     }
     
-    /**
-     * Get a layer by ID
-     */
     getLayer(layerId) {
         return this.layers.find(l => l.id === layerId);
     }
     
-    /**
-     * Get all selected layers
-     */
     getSelectedLayers() {
         return this.layers.filter(l => this.selectedLayerIds.includes(l.id));
     }
     
-    /**
-     * Set active layer
-     */
-    setActiveLayer(layerId) {
-        this.activeLayerId = layerId;
-        this.emit('activeLayerChanged', layerId);
+    getTopVisibleLayer() {
+        for (let i = this.layers.length - 1; i >= 0; i--) {
+            const layer = this.layers[i];
+            if (layer.visible && !layer.locked) {
+                return layer;
+            }
+        }
+        return null;
     }
     
-    /**
-     * Select/deselect layers
-     */
     selectLayer(layerId, addToSelection = false) {
         if (addToSelection) {
             if (!this.selectedLayerIds.includes(layerId)) {
                 this.selectedLayerIds.push(layerId);
             }
         } else {
-            this.selectedLayerIds = [layerId];
+            this.selectedLayerIds = layerId ? [layerId] : [];
         }
-        this.setActiveLayer(layerId);
-        this.emit('selectionChanged', this.selectedLayerIds);
+        this.emit('selectionChanged');
+        this.saveToStorage();
     }
     
-    /**
-     * Deselect all layers
-     */
     deselectAll() {
         this.selectedLayerIds = [];
-        this.activeLayerId = null;
-        this.emit('selectionChanged', []);
+        this.emit('selectionChanged');
+        this.saveToStorage();
     }
     
-    /**
-     * Reorder layers
-     */
-    reorderLayer(layerId, newIndex) {
-        const currentIndex = this.layers.findIndex(l => l.id === layerId);
-        if (currentIndex !== -1 && currentIndex !== newIndex) {
-            const [layer] = this.layers.splice(currentIndex, 1);
-            this.layers.splice(newIndex, 0, layer);
-            this.emit('layersChanged');
-            this.emit('change', { key: 'layers', value: this.layers });
-        }
+    moveLayer(layerId, direction) {
+        const index = this.layers.findIndex(l => l.id === layerId);
+        if (index === -1) return false;
+        
+        const newIndex = direction === 'up' ? index + 1 : index - 1;
+        if (newIndex < 0 || newIndex >= this.layers.length) return false;
+        
+        [this.layers[index], this.layers[newIndex]] = [this.layers[newIndex], this.layers[index]];
+        this.emit('layersChanged');
+        this.saveToStorage();
+        return true;
     }
     
-    /**
-     * Set zoom level
-     */
+    reorderLayer(fromIndex, toIndex) {
+        if (fromIndex < 0 || fromIndex >= this.layers.length || 
+            toIndex < 0 || toIndex >= this.layers.length) return false;
+        
+        const [layer] = this.layers.splice(fromIndex, 1);
+        this.layers.splice(toIndex, 0, layer);
+        this.emit('layersChanged');
+        this.saveToStorage();
+        return true;
+    }
+    
+    duplicateLayer(layerId) {
+        const layer = this.getLayer(layerId);
+        if (!layer) return null;
+        
+        const data = layer.toJSON();
+        data.id = PFUtils.generateId();
+        data.name = layer.name + ' copy';
+        data.x += 20;
+        data.y += 20;
+        
+        const newLayer = Layer.fromJSON(data);
+        this.addLayer(newLayer);
+        return newLayer;
+    }
+    
+    updateLayer(layerId, updates) {
+        const layer = this.getLayer(layerId);
+        if (!layer) return false;
+        
+        Object.assign(layer, updates);
+        layer.dirty = true;
+        this.emit('layerUpdated', layer);
+        this.emit('layersChanged');
+        this.saveToStorage();
+        return true;
+    }
+    
+    // Document operations
+    setDimensions(width, height) {
+        this.canvasWidth = width;
+        this.canvasHeight = height;
+        this.emit('canvasResized');
+        this.saveToStorage();
+    }
+    
+    setBackgroundColor(color) {
+        this.backgroundColor = color;
+        this.emit('backgroundColorChanged');
+        this.saveToStorage();
+    }
+    
+    // Tool operations
+    setTool(toolName) {
+        this.activeTool = toolName;
+        this.emit('toolChanged', toolName);
+    }
+    
+    // View operations
     setZoom(zoom) {
-        this.zoom = Math.max(0.01, Math.min(32, zoom));
+        this.zoom = PFUtils.clamp(zoom, 0.01, 10);
         this.emit('zoomChanged', this.zoom);
     }
     
-    /**
-     * Zoom in
-     */
-    zoomIn() {
-        this.setZoom(this.zoom * 1.2);
+    setPan(x, y) {
+        this.panX = x;
+        this.panY = y;
+        this.emit('panChanged');
     }
     
-    /**
-     * Zoom out
-     */
-    zoomOut() {
-        this.setZoom(this.zoom / 1.2);
-    }
-    
-    /**
-     * Fit canvas to viewport
-     */
-    fitToScreen(containerWidth, containerHeight) {
-        const zoomX = containerWidth / this.canvasWidth;
-        const zoomY = containerHeight / this.canvasHeight;
-        const zoom = Math.min(zoomX, zoomY, 1);
-        this.setZoom(zoom);
-        this.panX = (containerWidth - this.canvasWidth * zoom) / 2;
-        this.panY = (containerHeight - this.canvasHeight * zoom) / 2;
-        this.emit('viewportChanged');
-    }
-    
-    /**
-     * Reset viewport
-     */
-    resetViewport() {
+    resetView() {
         this.zoom = 1;
         this.panX = 0;
         this.panY = 0;
-        this.emit('viewportChanged');
+        this.emit('viewReset');
     }
     
-    /**
-     * Set adjustment value
-     */
-    setAdjustment(key, value) {
-        this.adjustments[key] = value;
-        this.emit('adjustmentsChanged', this.adjustments);
-    }
-    
-    /**
-     * Reset all adjustments
-     */
-    resetAdjustments() {
-        this.adjustments = {
-            brightness: 100,
-            contrast: 100,
-            saturation: 100,
-            hue: 0,
-            blur: 0,
-        };
-        this.emit('adjustmentsChanged', this.adjustments);
-    }
-    
-    /**
-     * Serialize state to JSON
-     */
-    toJSON() {
-        return {
-            canvasWidth: this.canvasWidth,
-            canvasHeight: this.canvasHeight,
-            backgroundColor: this.backgroundColor,
-            layers: this.layers.map(l => l.toJSON()),
-            adjustments: { ...this.adjustments },
-            guides: { ...this.guides },
-            projectName: this.projectName,
-        };
-    }
-    
-    /**
-     * Load state from JSON
-     */
-    fromJSON(json) {
-        const LayerClass = typeof Layer !== 'undefined' ? Layer : require('./models/Layer');
-        
-        this.canvasWidth = json.canvasWidth || 1920;
-        this.canvasHeight = json.canvasHeight || 1080;
-        this.backgroundColor = json.backgroundColor || '#ffffff';
-        this.layers = (json.layers || []).map(l => LayerClass.fromJSON(l));
-        this.adjustments = json.adjustments || { ...this.adjustments };
-        this.guides = json.guides || { horizontal: [], vertical: [] };
-        this.projectName = json.projectName || 'Untitled';
-        this.selectedLayerIds = [];
-        this.activeLayerId = null;
-        
-        this.emit('stateLoaded');
-        this.emit('layersChanged');
-        this.emit('change', { key: 'full', value: json });
-    }
-    
-    /**
-     * Save state to localStorage
-     */
+    // Storage
     saveToStorage() {
         try {
-            const data = this.toJSON();
+            const data = {
+                canvasWidth: this.canvasWidth,
+                canvasHeight: this.canvasHeight,
+                backgroundColor: this.backgroundColor,
+                layers: this.layers.map(l => l.toJSON()),
+                adjustments: { ...this.adjustments }
+            };
             localStorage.setItem('pixelforge_project', JSON.stringify(data));
-            this.lastSaved = Date.now();
-            this.emit('saved');
         } catch (e) {
             console.warn('Failed to save to localStorage:', e);
         }
     }
     
-    /**
-     * Load state from localStorage
-     */
     loadFromStorage() {
         try {
             const data = localStorage.getItem('pixelforge_project');
             if (data) {
-                const json = JSON.parse(data);
-                this.fromJSON(json);
+                const parsed = JSON.parse(data);
+                this.canvasWidth = parsed.canvasWidth || 1920;
+                this.canvasHeight = parsed.canvasHeight || 1080;
+                this.backgroundColor = parsed.backgroundColor || '#ffffff';
+                this.adjustments = parsed.adjustments || this.adjustments;
+                
+                // Load layers
+                this.layers = [];
+                if (parsed.layers) {
+                    parsed.layers.forEach(layerData => {
+                        const layer = Layer.fromJSON(layerData);
+                        this.layers.push(layer);
+                    });
+                }
+                
+                this.emit('projectLoaded');
                 return true;
             }
         } catch (e) {
@@ -330,15 +250,48 @@ class State {
         return false;
     }
     
-    /**
-     * Clear localStorage
-     */
-    clearStorage() {
+    toJSON() {
+        return {
+            canvasWidth: this.canvasWidth,
+            canvasHeight: this.canvasHeight,
+            backgroundColor: this.backgroundColor,
+            layers: this.layers.map(l => l.toJSON()),
+            adjustments: { ...this.adjustments }
+        };
+    }
+    
+    fromJSON(data) {
+        this.canvasWidth = data.canvasWidth || 1920;
+        this.canvasHeight = data.canvasHeight || 1080;
+        this.backgroundColor = data.backgroundColor || '#ffffff';
+        this.adjustments = data.adjustments || this.adjustments;
+        
+        this.layers = [];
+        if (data.layers) {
+            data.layers.forEach(layerData => {
+                const layer = Layer.fromJSON(layerData);
+                this.layers.push(layer);
+            });
+        }
+        
+        this.selectedLayerIds = [];
+        this.emit('projectLoaded');
+        this.emit('layersChanged');
+        this.emit('canvasResized');
+    }
+    
+    clear() {
+        this.layers = [];
+        this.selectedLayerIds = [];
+        this.canvasWidth = 1920;
+        this.canvasHeight = 1080;
+        this.backgroundColor = '#ffffff';
+        this.adjustments = { brightness: 0, contrast: 0, saturation: 0, hue: 0, blur: 0 };
+        this.emit('projectCleared');
+        this.emit('layersChanged');
+        this.emit('canvasResized');
         localStorage.removeItem('pixelforge_project');
     }
 }
 
-// Make globally available
-if (typeof window !== 'undefined') {
-    window.State = State;
-}
+window.State = State;

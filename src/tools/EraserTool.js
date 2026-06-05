@@ -1,101 +1,116 @@
-/**
- * Eraser Tool - For erasing content
- */
+// PixelForge - Eraser Tool
 
 class EraserTool extends BaseTool {
-    constructor(editor) {
-        super('eraser', editor);
-        this.cursor = 'cell';
-        
-        this.isErasing = false;
-        this.lastPos = null;
-        
-        // Default eraser properties
-        this.eraserSize = 20;
+    constructor(canvasManager) {
+        super('eraser', canvasManager);
+        this.erasingLayer = null;
+        this.lastX = 0;
+        this.lastY = 0;
     }
     
-    onPointerDown(event) {
-        if (event.button !== 0) return;
-        
-        const pos = this.getCanvasCoordinates(event);
-        this.isErasing = true;
-        this.lastPos = pos;
-        
-        this.editor.history.saveState('Erase');
+    onActivate() {
+        // Select or create layer to erase on
     }
     
-    onPointerMove(event) {
-        if (!this.isErasing) return;
+    onDeactivate() {
+        this.erasingLayer = null;
+    }
+    
+    getCursorStyle() {
+        const size = this.state.brushSize || 20;
+        return `url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><rect x="0" y="0" width="${size}" height="${size}" fill="white" stroke="black" stroke-width="1"/></svg>') ${size/2} ${size/2}, crosshair`;
+    }
+    
+    onPointerDown(e, x, y) {
+        super.onPointerDown(e, x, y);
         
-        const pos = this.getCanvasCoordinates(event);
+        // Find layer under cursor
+        const layer = this.findLayerAtPoint(x, y);
         
-        // Erase from selected layers
-        const selectedLayers = this.state.getSelectedLayers();
-        
-        if (selectedLayers.length > 0) {
-            selectedLayers.forEach(layer => {
-                if (layer.locked || !layer.visible) return;
-                
-                if (layer.type === 'image' && layer.image) {
-                    this.eraseFromLayer(layer, this.lastPos, pos);
-                }
+        if (layer && layer.type === 'image' && layer.image) {
+            this.erasingLayer = layer;
+            this.eraseAt(x, y);
+        } else {
+            // Create transparent layer to erase on
+            this.erasingLayer = new Layer({
+                type: 'image',
+                name: 'Erased Area',
+                x: 0,
+                y: 0,
+                width: this.state.canvasWidth,
+                height: this.state.canvasHeight
             });
+            this.state.addLayer(this.erasingLayer);
+            this.eraseAt(x, y);
         }
         
-        this.lastPos = pos;
+        this.canvasManager.render();
     }
     
-    onPointerUp(event) {
-        this.isErasing = false;
-        this.lastPos = null;
+    onPointerMove(e, x, y) {
+        super.onPointerMove(e, x, y);
+        
+        if (!this.isDragging || !this.erasingLayer) return;
+        
+        this.eraseLine(this.lastX, this.lastY, x, y);
+        this.canvasManager.render();
     }
     
-    eraseFromLayer(layer, from, to) {
-        // Create a temporary canvas to erase from the image
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = layer.width;
-        tempCanvas.height = layer.height;
-        const ctx = tempCanvas.getContext('2d');
+    onPointerUp(e, x, y) {
+        super.onPointerUp(e, x, y);
+        this.erasingLayer = null;
+    }
+    
+    eraseAt(x, y) {
+        if (!this.erasingLayer) return;
         
-        // Draw current image
-        ctx.drawImage(layer.image, 0, 0, layer.width, layer.height);
+        const ctx = this.erasingLayer.ctx;
+        const size = this.state.brushSize || 20;
         
-        // Set composite operation to erase
         ctx.globalCompositeOperation = 'destination-out';
+        ctx.beginPath();
+        ctx.arc(x, y, size / 2, 0, Math.PI * 2);
+        ctx.fill();
         
-        // Draw eraser circle(s)
-        this.drawEraserLine(ctx, from, to, layer);
-        
-        // Update layer image
-        layer.image = tempCanvas;
-        layer.touch();
+        this.erasingLayer.dirty = true;
     }
     
-    drawEraserLine(ctx, from, to, layer) {
-        const dx = to.x - layer.x;
-        const dy = to.y - layer.y;
-        const fromX = from.x - layer.x;
-        const fromY = from.y - layer.y;
+    eraseLine(x1, y1, x2, y2) {
+        if (!this.erasingLayer) return;
         
-        const distance = Math.sqrt((dx - fromX) ** 2 + (dy - fromY) ** 2);
-        const steps = Math.max(1, distance / (this.eraserSize / 4));
+        const ctx = this.erasingLayer.ctx;
+        const size = this.state.brushSize || 20;
         
-        for (let i = 0; i <= steps; i++) {
-            const t = i / steps;
-            const x = fromX + (dx - fromX) * t;
-            const y = fromY + (dy - fromY) * t;
-            
-            ctx.beginPath();
-            ctx.arc(x, y, this.eraserSize / 2, 0, Math.PI * 2);
-            ctx.fill();
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.lineWidth = size;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        
+        this.erasingLayer.dirty = true;
+    }
+    
+    onKeyDown(e) {
+        // Adjust eraser size with keys
+        if (e.key === '[') {
+            this.state.brushSize = Math.max(1, (this.state.brushSize || 20) - 1);
+            this.updateBrushSizeDisplay();
+        } else if (e.key === ']') {
+            this.state.brushSize = Math.min(100, (this.state.brushSize || 20) + 1);
+            this.updateBrushSizeDisplay();
         }
     }
     
-    setEraserSize(size) {
-        this.eraserSize = size;
+    updateBrushSizeDisplay() {
+        const display = document.getElementById('brush-size-value');
+        const slider = document.getElementById('brush-size');
+        if (display) display.textContent = this.state.brushSize;
+        if (slider) slider.value = this.state.brushSize;
     }
 }
 
-if (typeof window !== 'undefined') {
-    window.EraserTool = EraserTool;
-}
+window.EraserTool = EraserTool;

@@ -1,39 +1,67 @@
-/**
- * Eyedropper Tool - For sampling colors from the canvas
- */
+// PixelForge - Eyedropper Tool
 
 class EyedropperTool extends BaseTool {
-    constructor(editor) {
-        super('eyedropper', editor);
-        this.cursor = 'crosshair';
-        
-        this.sampleSize = 1; // 1x1, 3x3, 5x5 average
+    constructor(canvasManager) {
+        super('eyedropper', canvasManager);
     }
     
-    onPointerDown(event) {
-        if (event.button !== 0) return;
-        
-        const pos = this.getCanvasCoordinates(event);
-        this.sampleColor(pos.x, pos.y);
+    getCursorStyle() {
+        return 'crosshair';
     }
     
-    sampleColor(x, y) {
-        // Get pixel data from renderer
-        const pixelData = this.editor.renderer.getPixelData(x, y);
+    onPointerDown(e, x, y) {
+        super.onPointerDown(e, x, y);
         
-        if (pixelData) {
-            const color = this.rgbToHex(pixelData.r, pixelData.g, pixelData.b);
+        const color = this.getPixelColor(x, y);
+        
+        if (color) {
+            // Set as fill color
+            this.state.fillColor = color;
             
-            // Set as current brush/text color
-            if (this.editor.tools.brush) {
-                this.editor.tools.brush.setBrushColor(color);
+            // Update UI
+            const fillColorInput = document.getElementById('fill-color');
+            if (fillColorInput) {
+                fillColorInput.value = color;
             }
             
-            // Update UI color picker if available
-            this.updateUIColorPicker(color);
+            // Show feedback
+            this.showColorFeedback(color);
+        }
+    }
+    
+    getPixelColor(x, y) {
+        // Create temporary canvas to composite all visible layers
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = this.state.canvasWidth;
+        tempCanvas.height = this.state.canvasHeight;
+        const ctx = tempCanvas.getContext('2d');
+        
+        // Fill with background
+        if (this.state.backgroundColor && this.state.backgroundColor !== 'transparent') {
+            ctx.fillStyle = this.state.backgroundColor;
+            ctx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+        }
+        
+        // Draw visible layers
+        this.state.layers.forEach(layer => {
+            if (!layer.visible) return;
+            layer.render();
+            ctx.drawImage(layer.canvas, layer.x, layer.y);
+        });
+        
+        // Get pixel color
+        try {
+            const imageData = ctx.getImageData(Math.floor(x), Math.floor(y), 1, 1);
+            const data = imageData.data;
             
-            // Show color preview
-            this.showColorPreview(color, pixelData);
+            if (data[3] === 0) {
+                return null; // Transparent
+            }
+            
+            return this.rgbToHex(data[0], data[1], data[2]);
+        } catch (e) {
+            console.warn('Could not get pixel color:', e);
+            return null;
         }
     }
     
@@ -44,19 +72,29 @@ class EyedropperTool extends BaseTool {
         }).join('');
     }
     
-    updateUIColorPicker(color) {
-        const colorInput = document.querySelector('.color-input');
-        if (colorInput) {
-            colorInput.value = color;
-        }
-    }
-    
-    showColorPreview(color, pixelData) {
-        // Could show a toast/notification with sampled color
-        console.log(`Sampled color: ${color} (RGBA: ${pixelData.r}, ${pixelData.g}, ${pixelData.b}, ${pixelData.a})`);
+    showColorFeedback(color) {
+        // Create a small flash effect
+        const feedback = document.createElement('div');
+        feedback.style.cssText = `
+            position: fixed;
+            width: 40px;
+            height: 40px;
+            background: ${color};
+            border: 2px solid white;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 9999;
+            animation: fadeOut 0.5s ease-out forwards;
+        `;
+        
+        // Position at cursor
+        feedback.style.left = (this.lastX * this.state.zoom + 200) + 'px';
+        feedback.style.top = (this.lastY * this.state.zoom + 100) + 'px';
+        
+        document.body.appendChild(feedback);
+        
+        setTimeout(() => feedback.remove(), 500);
     }
 }
 
-if (typeof window !== 'undefined') {
-    window.EyedropperTool = EyedropperTool;
-}
+window.EyedropperTool = EyedropperTool;

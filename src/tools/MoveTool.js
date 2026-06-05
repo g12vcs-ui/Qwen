@@ -1,330 +1,273 @@
-/**
- * Move Tool - For moving, transforming, and manipulating layers
- */
+// PixelForge - Move Tool
 
 class MoveTool extends BaseTool {
-    constructor(editor) {
-        super('move', editor);
-        this.cursor = 'move';
-        
-        // Transform state
-        this.isDragging = false;
-        this.isResizing = false;
-        this.isRotating = false;
-        this.dragOffset = { x: 0, y: 0 };
-        this.resizeHandle = null;
+    constructor(canvasManager) {
+        super('move', canvasManager);
+        this.draggedLayers = [];
+        this.dragOffsetX = 0;
+        this.dragOffsetY = 0;
+        this.transformMode = null; // 'move', 'scale', 'rotate'
+        this.selectedHandle = null;
         this.initialBounds = null;
-        this.startPos = { x: 0, y: 0 };
-        
-        // Transform controls element
-        this.transformControls = document.getElementById('transformControls');
     }
     
     onActivate() {
-        this.updateTransformControls();
-        this.state.subscribe('selectionChanged', () => this.updateTransformControls());
-        this.state.subscribe('layersChanged', () => this.updateTransformControls());
+        this.canvasManager.showTransformBox();
     }
     
     onDeactivate() {
-        this.hideTransformControls();
+        this.canvasManager.hideTransformBox();
+        this.draggedLayers = [];
+        this.transformMode = null;
     }
     
-    /**
-     * Show transform controls for selected layer
-     */
-    updateTransformControls() {
-        const selectedLayers = this.state.getSelectedLayers();
-        if (selectedLayers.length === 1) {
-            this.showTransformControls(selectedLayers[0]);
-        } else {
-            this.hideTransformControls();
-        }
+    getCursorStyle() {
+        if (this.transformMode === 'scale') return 'nwse-resize';
+        if (this.transformMode === 'rotate') return 'grab';
+        return 'move';
     }
     
-    /**
-     * Show transform controls for a layer
-     */
-    showTransformControls(layer) {
-        if (!this.transformControls) return;
+    onPointerDown(e, x, y) {
+        super.onPointerDown(e, x, y);
         
-        const { x, y, width, height, rotation } = layer;
-        const zoom = this.state.zoom;
-        
-        this.transformControls.style.display = 'block';
-        this.transformControls.style.left = `${x * zoom}px`;
-        this.transformControls.style.top = `${y * zoom}px`;
-        this.transformControls.style.width = `${width * zoom}px`;
-        this.transformControls.style.height = `${height * zoom}px`;
-        this.transformControls.style.transform = `rotate(${rotation}deg)`;
-    }
-    
-    /**
-     * Hide transform controls
-     */
-    hideTransformControls() {
-        if (this.transformControls) {
-            this.transformControls.style.display = 'none';
-        }
-    }
-    
-    /**
-     * Get the layer at coordinates
-     */
-    getLayerAt(x, y) {
-        // Search from top to bottom (reverse order)
-        for (let i = this.state.layers.length - 1; i >= 0; i--) {
-            const layer = this.state.layers[i];
-            if (layer.visible && !layer.locked && layer.containsPoint(x, y)) {
-                return layer;
+        // Check for transform handle click
+        const handle = this.canvasManager.getTransformHandleAtPoint(x, y);
+        if (handle) {
+            this.selectedHandle = handle;
+            if (handle === 'rotate') {
+                this.transformMode = 'rotate';
+            } else {
+                this.transformMode = 'scale';
             }
-        }
-        return null;
-    }
-    
-    /**
-     * Check if clicking on a resize handle
-     */
-    getResizeHandle(x, y, layer) {
-        if (!layer || !this.transformControls || this.transformControls.style.display === 'none') {
-            return null;
-        }
-        
-        const rect = this.transformControls.getBoundingClientRect();
-        const zoom = this.state.zoom;
-        const handleSize = 8 / zoom;
-        const handles = {
-            nw: { x: rect.left, y: rect.top },
-            n: { x: rect.left + rect.width / 2, y: rect.top },
-            ne: { x: rect.right, y: rect.top },
-            e: { x: rect.right, y: rect.top + rect.height / 2 },
-            se: { x: rect.right, y: rect.bottom },
-            s: { x: rect.left + rect.width / 2, y: rect.bottom },
-            sw: { x: rect.left, y: rect.bottom },
-            w: { x: rect.left, y: rect.top + rect.height / 2 },
-        };
-        
-        for (const [name, pos] of Object.entries(handles)) {
-            if (Math.abs(x * zoom - pos.x) < handleSize && Math.abs(y * zoom - pos.y) < handleSize) {
-                return name;
-            }
-        }
-        
-        // Check rotate handle
-        const rotateY = rect.top - 30;
-        const rotateX = rect.left + rect.width / 2;
-        if (Math.abs(x * zoom - rotateX) < handleSize * 2 && Math.abs(y * zoom - rotateY) < handleSize * 2) {
-            return 'rotate';
-        }
-        
-        return null;
-    }
-    
-    onPointerDown(event) {
-        if (event.button !== 0) return; // Only left click
-        
-        const pos = this.getCanvasCoordinates(event);
-        const selectedLayers = this.state.getSelectedLayers();
-        
-        // Check for resize handle first
-        if (selectedLayers.length === 1) {
-            const handle = this.getResizeHandle(pos.x, pos.y, selectedLayers[0]);
-            if (handle) {
-                this.isResizing = handle === 'rotate' ? false : true;
-                this.isRotating = handle === 'rotate';
-                this.resizeHandle = handle;
-                this.startPos = pos;
-                this.initialBounds = { ...selectedLayers[0] };
-                event.preventDefault();
-                return;
-            }
+            this.initialBounds = this.getSelectedLayerBounds();
+            return;
         }
         
         // Check for layer selection
-        const layer = this.getLayerAt(pos.x, pos.y);
+        const layer = this.findLayerAtPoint(x, y);
         
         if (layer) {
             // Select layer
-            const modifiers = this.getModifiers(event);
-            this.state.selectLayer(layer.id, modifiers.shift);
+            const addToSelection = e.shiftKey;
+            this.state.selectLayer(layer.id, addToSelection);
             
             // Start dragging
-            if (!layer.locked) {
-                this.isDragging = true;
-                this.dragOffset = {
-                    x: pos.x - layer.x,
-                    y: pos.y - layer.y,
-                };
-                
-                // Save state for undo
-                this.editor.history.saveState('Move Layer');
+            this.draggedLayers = this.state.getSelectedLayers();
+            if (this.draggedLayers.length > 0) {
+                const firstLayer = this.draggedLayers[0];
+                this.dragOffsetX = x - firstLayer.x;
+                this.dragOffsetY = y - firstLayer.y;
             }
+            
+            this.transformMode = 'move';
+            this.canvasManager.showTransformBox();
         } else {
-            // Deselect if clicking on empty space
-            if (!modifiers.shift) {
-                this.state.deselectAll();
-            }
+            // Clicked on empty space - deselect
+            this.state.deselectAll();
+            this.canvasManager.hideTransformBox();
         }
     }
     
-    onPointerMove(event) {
-        const pos = this.getCanvasCoordinates(event);
+    onPointerMove(e, x, y) {
+        super.onPointerMove(e, x, y);
         
-        if (this.isDragging && this.state.selectedLayerIds.length > 0) {
-            // Move selected layers
-            const dx = pos.x - this.dragOffset.x - (this.state.getSelectedLayers()[0]?.x || 0);
-            const dy = pos.y - this.dragOffset.y - (this.state.getSelectedLayers()[0]?.y || 0);
+        // Update cursor based on hover
+        if (!this.isDragging) {
+            const handle = this.canvasManager.getTransformHandleAtPoint(x, y);
+            const layer = this.findLayerAtPoint(x, y);
             
-            this.editor.history.batch('Move Layers', () => {
-                for (const layerId of this.state.selectedLayerIds) {
-                    const layer = this.state.getLayer(layerId);
-                    if (layer && !layer.locked) {
-                        layer.x += dx;
-                        layer.y += dy;
-                        layer.touch();
-                    }
+            if (handle === 'rotate') {
+                this.canvasManager.setCursor('grab');
+            } else if (handle) {
+                this.canvasManager.setCursor('nwse-resize');
+            } else if (layer) {
+                this.canvasManager.setCursor('move');
+            } else {
+                this.canvasManager.setCursor('default');
+            }
+            return;
+        }
+        
+        const dx = x - this.lastX;
+        const dy = y - this.lastY;
+        
+        if (this.transformMode === 'move' && this.draggedLayers.length > 0) {
+            // Move layers
+            this.state.beginBatch?.();
+            this.draggedLayers.forEach(layer => {
+                if (!layer.locked) {
+                    layer.x += dx;
+                    layer.y += dy;
+                    layer.dirty = true;
                 }
             });
-            
-            this.dragOffset.x = pos.x - (this.state.getSelectedLayers()[0]?.x || 0);
-            this.dragOffset.y = pos.y - (this.state.getSelectedLayers()[0]?.y || 0);
-            this.updateTransformControls();
-        } else if (this.isResizing && this.resizeHandle && this.state.selectedLayerIds.length === 1) {
-            const layer = this.state.getLayer(this.state.selectedLayerIds[0]);
-            if (layer && !layer.locked) {
-                this.handleResize(pos, layer);
-            }
-        } else if (this.isRotating && this.state.selectedLayerIds.length === 1) {
-            const layer = this.state.getLayer(this.state.selectedLayerIds[0]);
-            if (layer && !layer.locked) {
-                this.handleRotate(pos, layer);
-            }
-        }
-    }
-    
-    onPointerUp(event) {
-        this.isDragging = false;
-        this.isResizing = false;
-        this.isRotating = false;
-        this.resizeHandle = null;
-    }
-    
-    /**
-     * Handle resize operation
-     */
-    handleResize(pos, layer) {
-        const dx = pos.x - this.startPos.x;
-        const dy = pos.y - this.startPos.y;
-        const mods = this.getModifiers({ shiftKey: false, ctrlKey: false, altKey: event?.altKey });
-        
-        let newWidth = layer.width;
-        let newHeight = layer.height;
-        let newX = layer.x;
-        let newY = layer.y;
-        
-        // Handle different resize directions
-        switch (this.resizeHandle) {
-            case 'e':
-                newWidth = Math.max(10, this.initialBounds.width + dx);
-                break;
-            case 'w':
-                newWidth = Math.max(10, this.initialBounds.width - dx);
-                newX = this.initialBounds.x + (this.initialBounds.width - newWidth);
-                break;
-            case 's':
-                newHeight = Math.max(10, this.initialBounds.height + dy);
-                break;
-            case 'n':
-                newHeight = Math.max(10, this.initialBounds.height - dy);
-                newY = this.initialBounds.y + (this.initialBounds.height - newHeight);
-                break;
-            case 'se':
-                newWidth = Math.max(10, this.initialBounds.width + dx);
-                newHeight = Math.max(10, this.initialBounds.height + dy);
-                break;
-            case 'sw':
-                newWidth = Math.max(10, this.initialBounds.width - dx);
-                newHeight = Math.max(10, this.initialBounds.height + dy);
-                newX = this.initialBounds.x + (this.initialBounds.width - newWidth);
-                break;
-            case 'ne':
-                newWidth = Math.max(10, this.initialBounds.width + dx);
-                newHeight = Math.max(10, this.initialBounds.height - dy);
-                newY = this.initialBounds.y + (this.initialBounds.height - newHeight);
-                break;
-            case 'nw':
-                newWidth = Math.max(10, this.initialBounds.width - dx);
-                newHeight = Math.max(10, this.initialBounds.height - dy);
-                newX = this.initialBounds.x + (this.initialBounds.width - newWidth);
-                newY = this.initialBounds.y + (this.initialBounds.height - newHeight);
-                break;
+            this.state.endBatch?.();
+            this.canvasManager.updateTransformBox();
+        } else if (this.transformMode === 'scale' && this.selectedHandle) {
+            this.scaleSelectedLayer(x, y);
+        } else if (this.transformMode === 'rotate') {
+            this.rotateSelectedLayer(x, y);
         }
         
-        // Maintain aspect ratio if shift is pressed
-        if (mods.shift) {
-            const aspectRatio = this.initialBounds.width / this.initialBounds.height;
-            if (Math.abs(dx) > Math.abs(dy)) {
-                newHeight = newWidth / aspectRatio;
+        this.canvasManager.render();
+    }
+    
+    onPointerUp(e, x, y) {
+        super.onPointerUp(e, x, y);
+        this.state.endBatch?.();
+        this.transformMode = null;
+        this.selectedHandle = null;
+        this.initialBounds = null;
+    }
+    
+    scaleSelectedLayer(x, y) {
+        const layers = this.state.getSelectedLayers();
+        if (layers.length === 0 || !this.initialBounds) return;
+        
+        const bounds = this.initialBounds;
+        const centerX = bounds.x + bounds.width / 2;
+        const centerY = bounds.y + bounds.height / 2;
+        
+        // Calculate scale based on handle
+        let newWidth = bounds.width;
+        let newHeight = bounds.height;
+        let newX = bounds.x;
+        let newY = bounds.y;
+        
+        const h = this.selectedHandle;
+        
+        if (h.includes('e')) {
+            newWidth = x - bounds.x;
+        }
+        if (h.includes('w')) {
+            newWidth = bounds.width + (bounds.x - x);
+            newX = x;
+        }
+        if (h.includes('s')) {
+            newHeight = y - bounds.y;
+        }
+        if (h.includes('n')) {
+            newHeight = bounds.height + (bounds.y - y);
+            newY = y;
+        }
+        
+        // Maintain aspect ratio with Shift
+        if (e.shiftKey && bounds.width > 0) {
+            const aspect = bounds.height / bounds.width;
+            if (h.includes('e') || h.includes('w')) {
+                newHeight = newWidth * aspect;
+                if (h.includes('n')) newY = bounds.y + (bounds.height - newHeight);
             } else {
-                newWidth = newHeight * aspectRatio;
+                newWidth = newHeight / aspect;
+                if (h.includes('w')) newX = bounds.x + (bounds.width - newWidth);
             }
         }
         
-        layer.width = newWidth;
-        layer.height = newHeight;
-        layer.x = newX;
-        layer.y = newY;
-        layer.touch();
+        // Apply to all selected layers
+        const scaleX = newWidth / bounds.width;
+        const scaleY = newHeight / bounds.height;
         
-        this.updateTransformControls();
+        layers.forEach(layer => {
+            if (!layer.locked) {
+                if (layer === layers[0]) {
+                    layer.x = newX;
+                    layer.y = newY;
+                } else {
+                    // Move relative to first layer
+                    const relX = layer.x - bounds.x;
+                    const relY = layer.y - bounds.y;
+                    layer.x = newX + relX * scaleX;
+                    layer.y = newY + relY * scaleY;
+                }
+                layer.width = Math.max(10, layer.width * scaleX);
+                layer.height = Math.max(10, layer.height * scaleY);
+                layer.dirty = true;
+            }
+        });
+        
+        this.canvasManager.updateTransformBox();
     }
     
-    /**
-     * Handle rotate operation
-     */
-    handleRotate(pos, layer) {
-        const centerX = layer.x + layer.width / 2;
-        const centerY = layer.y + layer.height / 2;
+    rotateSelectedLayer(x, y) {
+        const layers = this.state.getSelectedLayers();
+        if (layers.length === 0 || !this.initialBounds) return;
         
-        const angle = Math.atan2(pos.y - centerY, pos.x - centerX);
-        layer.rotation = (angle * 180 / Math.PI) + 90;
-        layer.touch();
+        const bounds = this.initialBounds;
+        const centerX = bounds.x + bounds.width / 2;
+        const centerY = bounds.y + bounds.height / 2;
         
-        this.updateTransformControls();
+        const angle = Math.atan2(y - centerY, x - centerX);
+        const degrees = PFUtils.radToDeg(angle) + 90; // Offset so top is 0
+        
+        layers.forEach(layer => {
+            if (!layer.locked) {
+                layer.rotation = PFUtils.degToRad(degrees);
+                layer.dirty = true;
+            }
+        });
+        
+        this.canvasManager.updateTransformBox();
     }
     
-    onKeyDown(event) {
-        // Arrow key movement
-        const selectedLayers = this.state.getSelectedLayers();
-        if (selectedLayers.length === 0) return;
+    getSelectedLayerBounds() {
+        const layers = this.state.getSelectedLayers();
+        if (layers.length === 0) return null;
         
-        const step = event.shiftKey ? 10 : 1;
+        let minX = Infinity, minY = Infinity;
+        let maxX = -Infinity, maxY = -Infinity;
+        
+        layers.forEach(layer => {
+            minX = Math.min(minX, layer.x);
+            minY = Math.min(minY, layer.y);
+            maxX = Math.max(maxX, layer.x + layer.width);
+            maxY = Math.max(maxY, layer.y + layer.height);
+        });
+        
+        return {
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY
+        };
+    }
+    
+    onKeyDown(e) {
+        const layers = this.state.getSelectedLayers();
+        if (layers.length === 0) return;
+        
+        const step = e.shiftKey ? 10 : 1;
         let moved = false;
         
-        switch (event.key) {
+        switch (e.key) {
             case 'ArrowUp':
-                selectedLayers.forEach(l => { if (!l.locked) { l.y -= step; moved = true; } });
+                layers.forEach(l => { if (!l.locked) { l.y -= step; l.dirty = true; } });
+                moved = true;
                 break;
             case 'ArrowDown':
-                selectedLayers.forEach(l => { if (!l.locked) { l.y += step; moved = true; } });
+                layers.forEach(l => { if (!l.locked) { l.y += step; l.dirty = true; } });
+                moved = true;
                 break;
             case 'ArrowLeft':
-                selectedLayers.forEach(l => { if (!l.locked) { l.x -= step; moved = true; } });
+                layers.forEach(l => { if (!l.locked) { l.x -= step; l.dirty = true; } });
+                moved = true;
                 break;
             case 'ArrowRight':
-                selectedLayers.forEach(l => { if (!l.locked) { l.x += step; moved = true; } });
+                layers.forEach(l => { if (!l.locked) { l.x += step; l.dirty = true; } });
+                moved = true;
+                break;
+            case 'Delete':
+            case 'Backspace':
+                layers.forEach(l => this.state.removeLayer(l.id));
+                moved = true;
                 break;
         }
         
         if (moved) {
-            selectedLayers.forEach(l => l.touch());
-            this.updateTransformControls();
-            event.preventDefault();
+            this.state.emit('layersChanged');
+            this.canvasManager.updateTransformBox();
+            this.canvasManager.render();
         }
     }
 }
 
-// Make globally available
-if (typeof window !== 'undefined') {
-    window.MoveTool = MoveTool;
-}
+window.MoveTool = MoveTool;

@@ -1,197 +1,190 @@
-/**
- * Text Tool - For adding and editing text layers
- */
+// PixelForge - Text Tool
 
 class TextTool extends BaseTool {
-    constructor(editor) {
-        super('text', editor);
-        this.cursor = 'text';
-        
-        this.isEditing = false;
-        this.editElement = null;
-        
-        // Default text properties
-        this.defaultText = {
-            fontFamily: 'Arial',
-            fontSize: 32,
-            fontWeight: 'normal',
-            fontStyle: 'normal',
-            fillColor: '#ffffff',
-            textAlign: 'left',
-            lineHeight: 1.2,
-        };
+    constructor(canvasManager) {
+        super('text', canvasManager);
+        this.editingLayer = null;
+        this.textarea = null;
     }
     
     onActivate() {
-        this.createEditElement();
+        this.createTextarea();
     }
     
     onDeactivate() {
         this.finishEditing();
+        this.removeTextarea();
     }
     
-    createEditElement() {
-        if (this.editElement) return;
-        
-        this.editElement = document.createElement('textarea');
-        this.editElement.className = 'text-edit-element';
-        this.editElement.style.cssText = `
-            position: absolute;
-            display: none;
-            background: transparent;
-            border: 1px dashed #6366f1;
-            color: white;
-            font-family: Arial;
-            font-size: 32px;
-            line-height: 1.2;
-            padding: 4px;
-            margin: 0;
-            resize: none;
-            outline: none;
-            overflow: hidden;
-            z-index: 1000;
-        `;
-        
-        this.editElement.addEventListener('blur', () => this.finishEditing());
-        this.editElement.addEventListener('keydown', (e) => {
-            if (e.key === 'Escape') {
-                this.cancelEditing();
-            } else if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
+    createTextarea() {
+        if (!this.textarea) {
+            this.textarea = document.createElement('textarea');
+            this.textarea.className = 'text-editor';
+            this.textarea.style.cssText = `
+                position: absolute;
+                display: none;
+                background: rgba(255, 255, 255, 0.9);
+                border: 1px solid #3b82f6;
+                color: #000;
+                font-family: Arial;
+                font-size: 24px;
+                padding: 4px;
+                resize: none;
+                outline: none;
+                overflow: hidden;
+                z-index: 1000;
+            `;
+            document.getElementById('canvas-container').appendChild(this.textarea);
+            
+            // Handle input
+            this.textarea.addEventListener('input', () => {
+                if (this.editingLayer) {
+                    this.editingLayer.text = this.textarea.value;
+                    this.editingLayer.dirty = true;
+                    this.updateTextareaSize();
+                    this.canvasManager.render();
+                }
+            });
+            
+            // Handle blur
+            this.textarea.addEventListener('blur', () => {
                 this.finishEditing();
-            }
-        });
-        
-        document.getElementById('canvasContainer').appendChild(this.editElement);
+            });
+            
+            // Handle escape
+            this.textarea.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    this.textarea.blur();
+                }
+            });
+        }
     }
     
-    onPointerDown(event) {
-        if (event.button !== 0) return;
-        
-        const pos = this.getCanvasCoordinates(event);
+    removeTextarea() {
+        if (this.textarea) {
+            this.textarea.remove();
+            this.textarea = null;
+        }
+    }
+    
+    getCursorStyle() {
+        return 'text';
+    }
+    
+    onPointerDown(e, x, y) {
+        super.onPointerDown(e, x, y);
         
         // Check if clicking on existing text layer
-        const layer = this.getTextLayerAt(pos.x, pos.y);
+        const layer = this.findLayerAtPoint(x, y);
         
-        if (layer) {
-            // Edit existing text
-            this.state.selectLayer(layer.id);
+        if (layer && layer.type === 'text') {
             this.startEditing(layer);
         } else {
             // Create new text layer
-            this.createNewText(pos.x, pos.y);
+            this.createNewTextLayer(x, y);
         }
     }
     
-    getTextLayerAt(x, y) {
-        for (let i = this.state.layers.length - 1; i >= 0; i--) {
-            const layer = this.state.layers[i];
-            if (layer.type === 'text' && layer.visible && layer.containsPoint(x, y)) {
-                return layer;
-            }
-        }
-        return null;
-    }
-    
-    createNewText(x, y) {
-        const LayerClass = window.Layer || Layer;
+    createNewTextLayer(x, y) {
+        const fillColor = this.state.fillColor || '#ffffff';
         
-        const textLayer = new LayerClass({
+        const layer = new Layer({
             type: 'text',
             name: 'Text',
             x: x,
             y: y,
             width: 200,
-            height: 50,
-            text: 'Type here...',
-            ...this.defaultText,
+            height: 40,
+            text: 'Text',
+            fillColor: fillColor,
+            fontSize: 24,
+            fontFamily: 'Arial'
         });
         
-        this.editor.history.saveState('Add Text');
-        this.state.addLayer(textLayer);
-        this.startEditing(textLayer);
+        this.state.addLayer(layer);
+        this.startEditing(layer);
+        this.canvasManager.render();
     }
     
     startEditing(layer) {
-        if (!this.editElement) return;
-        
-        this.isEditing = true;
-        const zoom = this.state.zoom;
-        
-        // Position edit element
-        this.editElement.style.display = 'block';
-        this.editElement.style.left = `${layer.x * zoom}px`;
-        this.editElement.style.top = `${layer.y * zoom}px`;
-        this.editElement.style.width = `${layer.width * zoom}px`;
-        this.editElement.style.height = `${layer.height * zoom}px`;
-        this.editElement.style.fontSize = `${layer.fontSize * zoom}px`;
-        this.editElement.style.fontFamily = layer.fontFamily;
-        this.editElement.style.color = layer.fillColor;
-        this.editElement.style.textAlign = layer.textAlign;
-        
-        // Set content
-        this.editElement.value = layer.text;
-        this.editElement.focus();
-        this.editElement.select();
-        
         this.editingLayer = layer;
+        this.state.selectLayer(layer.id);
+        
+        this.textarea.value = layer.text;
+        this.textarea.style.display = 'block';
+        this.textarea.style.fontFamily = layer.fontFamily;
+        this.textarea.style.fontSize = layer.fontSize + 'px';
+        this.textarea.style.color = layer.fillColor;
+        
+        this.updateTextareaPosition();
+        this.updateTextareaSize();
+        
+        // Focus and select all
+        setTimeout(() => {
+            this.textarea.focus();
+            this.textarea.select();
+        }, 10);
     }
     
     finishEditing() {
-        if (!this.isEditing || !this.editingLayer) return;
-        
-        const newText = this.editElement.value;
-        
-        if (newText !== this.editingLayer.text) {
-            this.editor.history.saveState('Edit Text');
-            this.editingLayer.text = newText;
-            this.editingLayer.touch();
-            
-            // Auto-resize based on content
-            this.autoResizeLayer(this.editingLayer);
+        if (this.editingLayer) {
+            this.editingLayer.text = this.textarea.value;
+            this.editingLayer.dirty = true;
+            this.editingLayer = null;
         }
+        this.textarea.style.display = 'none';
+        this.canvasManager.render();
+    }
+    
+    updateTextareaPosition() {
+        if (!this.editingLayer || !this.textarea) return;
         
-        this.isEditing = false;
-        this.editElement.style.display = 'none';
-        this.editingLayer = null;
+        const layer = this.editingLayer;
+        const zoom = this.state.zoom;
+        const container = document.getElementById('canvas-container');
+        
+        this.textarea.style.left = (layer.x * zoom) + 'px';
+        this.textarea.style.top = (layer.y * zoom) + 'px';
     }
     
-    cancelEditing() {
-        this.isEditing = false;
-        this.editElement.style.display = 'none';
-        this.editingLayer = null;
-    }
-    
-    autoResizeLayer(layer) {
-        // Simple auto-resize based on text content
-        const lines = layer.text.split('\n');
+    updateTextareaSize() {
+        if (!this.editingLayer || !this.textarea) return;
+        
+        const layer = this.editingLayer;
+        const zoom = this.state.zoom;
+        
+        // Calculate text dimensions
+        const ctx = this.textarea;
+        const lines = this.textarea.value.split('\n');
         const maxLine = lines.reduce((a, b) => a.length > b.length ? a : b, '');
         
         // Approximate width based on character count
         const charWidth = layer.fontSize * 0.6;
-        const estimatedWidth = Math.max(100, maxLine.length * charWidth);
-        const estimatedHeight = lines.length * layer.fontSize * layer.lineHeight + 20;
+        const lineHeight = layer.fontSize * layer.lineHeight;
         
-        layer.width = estimatedWidth;
-        layer.height = estimatedHeight;
+        const width = Math.max(layer.width, maxLine.length * charWidth + 20);
+        const height = Math.max(layer.height, lines.length * lineHeight + 10);
+        
+        this.textarea.style.width = (width * zoom) + 'px';
+        this.textarea.style.height = (height * zoom) + 'px';
+        
+        layer.width = width;
+        layer.height = height;
     }
     
-    onKeyDown(event) {
-        // Delete selected text layer
-        if ((event.key === 'Delete' || event.key === 'Backspace') && !this.isEditing) {
-            const selectedLayers = this.state.getSelectedLayers();
-            if (selectedLayers.length > 0) {
-                this.editor.history.saveState('Delete Text');
-                selectedLayers.forEach(layer => {
-                    if (layer.type === 'text') {
-                        this.state.removeLayer(layer.id);
-                    }
-                });
+    onKeyDown(e) {
+        if (this.editingLayer) {
+            // Let textarea handle typing
+            return;
+        }
+        
+        if (e.key === 'Enter') {
+            const layers = this.state.getSelectedLayers();
+            if (layers.length > 0 && layers[0].type === 'text') {
+                this.startEditing(layers[0]);
             }
         }
     }
 }
 
-if (typeof window !== 'undefined') {
-    window.TextTool = TextTool;
-}
+window.TextTool = TextTool;

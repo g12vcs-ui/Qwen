@@ -1,167 +1,131 @@
-/**
- * Brush Tool - For freehand drawing
- */
+// PixelForge - Brush Tool
 
 class BrushTool extends BaseTool {
-    constructor(editor) {
-        super('brush', editor);
-        this.cursor = 'crosshair';
-        
-        this.isDrawing = false;
-        this.lastPos = null;
-        this.currentPath = [];
-        this.brushCanvas = null;
-        this.brushCtx = null;
-        
-        // Default brush properties
-        this.brushSize = 5;
-        this.brushColor = '#ffffff';
-        this.brushOpacity = 1;
-        this.brushHardness = 1;
+    constructor(canvasManager) {
+        super('brush', canvasManager);
+        this.drawingLayer = null;
+        this.lastPoints = [];
+        this.smoothing = 0.5;
     }
     
     onActivate() {
-        this.createBrushCanvas();
+        // Create or get brush layer
     }
     
-    createBrushCanvas() {
-        if (this.brushCanvas) return;
-        
-        this.brushCanvas = document.createElement('canvas');
-        const size = 100;
-        this.brushCanvas.width = size;
-        this.brushCanvas.height = size;
-        this.brushCtx = this.brushCanvas.getContext('2d');
-        
-        // Create brush tip
-        this.updateBrushTip();
+    onDeactivate() {
+        this.drawingLayer = null;
+        this.lastPoints = [];
     }
     
-    updateBrushTip() {
-        if (!this.brushCtx) return;
-        
-        const size = 100;
-        const ctx = this.brushCtx;
-        const radius = (this.brushSize / 2) * (size / 20);
-        
-        ctx.clearRect(0, 0, size, size);
-        ctx.beginPath();
-        ctx.arc(size / 2, size / 2, radius, 0, Math.PI * 2);
-        
-        if (this.brushHardness < 1) {
-            const gradient = ctx.createRadialGradient(
-                size / 2, size / 2, 0,
-                size / 2, size / 2, radius
-            );
-            gradient.addColorStop(0, `rgba(0, 0, 0, ${this.brushOpacity})`);
-            gradient.addColorStop(this.brushHardness, `rgba(0, 0, 0, ${this.brushOpacity})`);
-            gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-            ctx.fillStyle = gradient;
-        } else {
-            ctx.fillStyle = `rgba(0, 0, 0, ${this.brushOpacity})`;
-        }
-        
-        ctx.fill();
+    getCursorStyle() {
+        const size = this.state.brushSize || 10;
+        return `url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}"><circle cx="${size/2}" cy="${size/2}" r="${size/2}" fill="%233b82f6" opacity="0.5"/></svg>') ${size/2} ${size/2}, crosshair`;
     }
     
-    onPointerDown(event) {
-        if (event.button !== 0) return;
+    onPointerDown(e, x, y) {
+        super.onPointerDown(e, x, y);
         
-        const pos = this.getCanvasCoordinates(event);
-        this.isDrawing = true;
-        this.lastPos = pos;
-        this.currentPath = [pos];
-        
-        // Create new brush layer
-        const LayerClass = window.Layer || Layer;
-        
-        this.brushLayer = new LayerClass({
-            type: 'brush',
+        // Create a new drawing layer for this stroke
+        this.drawingLayer = new Layer({
+            type: 'image',
             name: 'Brush Stroke',
             x: 0,
             y: 0,
             width: this.state.canvasWidth,
-            height: this.state.canvasHeight,
+            height: this.state.canvasHeight
         });
         
-        // Create canvas for this stroke
-        this.strokeCanvas = Utils.createCanvas(this.state.canvasWidth, this.state.canvasHeight);
-        this.strokeCtx = this.strokeCanvas.getContext('2d');
-        
-        this.editor.history.saveState('Brush Stroke');
-        this.state.addLayer(this.brushLayer);
+        this.lastPoints = [{ x, y }];
         
         // Draw initial point
-        this.drawAt(pos);
+        this.drawPoint(x, y);
+        
+        this.state.addLayer(this.drawingLayer);
+        this.canvasManager.render();
     }
     
-    onPointerMove(event) {
-        if (!this.isDrawing) return;
+    onPointerMove(e, x, y) {
+        super.onPointerMove(e, x, y);
         
-        const pos = this.getCanvasCoordinates(event);
+        if (!this.isDragging || !this.drawingLayer) return;
         
-        // Draw line from last position
-        this.drawLine(this.lastPos, pos);
-        this.currentPath.push(pos);
-        this.lastPos = pos;
+        // Apply smoothing
+        const smoothedX = this.lastX + (x - this.lastX) * this.smoothing;
+        const smoothedY = this.lastY + (y - this.lastY) * this.smoothing;
+        
+        this.drawLine(this.lastX, this.lastY, smoothedX, smoothedY);
+        this.lastPoints.push({ x: smoothedX, y: smoothedY });
+        
+        this.canvasManager.render();
     }
     
-    onPointerUp(event) {
-        if (!this.isDrawing) return;
+    onPointerUp(e, x, y) {
+        super.onPointerUp(e, x, y);
+        this.drawingLayer = null;
+        this.lastPoints = [];
+    }
+    
+    drawPoint(x, y) {
+        if (!this.drawingLayer) return;
         
-        this.isDrawing = false;
+        const ctx = this.drawingLayer.ctx;
+        const size = this.state.brushSize || 10;
+        const opacity = this.state.brushOpacity || 1;
+        const color = this.state.fillColor || '#000000';
         
-        // Convert stroke canvas to image
-        if (this.brushLayer && this.strokeCanvas) {
-            this.brushLayer.image = this.strokeCanvas;
-            this.brushLayer.touch();
+        ctx.fillStyle = this.hexToRgba(color, opacity);
+        ctx.beginPath();
+        ctx.arc(x, y, size / 2, 0, Math.PI * 2);
+        ctx.fill();
+        
+        this.drawingLayer.dirty = true;
+    }
+    
+    drawLine(x1, y1, x2, y2) {
+        if (!this.drawingLayer) return;
+        
+        const ctx = this.drawingLayer.ctx;
+        const size = this.state.brushSize || 10;
+        const opacity = this.state.brushOpacity || 1;
+        const color = this.state.fillColor || '#000000';
+        
+        ctx.strokeStyle = this.hexToRgba(color, opacity);
+        ctx.lineWidth = size;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        
+        this.drawingLayer.dirty = true;
+    }
+    
+    hexToRgba(hex, alpha) {
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+    
+    onKeyDown(e) {
+        // Adjust brush size with keys
+        if (e.key === '[') {
+            this.state.brushSize = Math.max(1, (this.state.brushSize || 10) - 1);
+            this.updateBrushSizeDisplay();
+        } else if (e.key === ']') {
+            this.state.brushSize = Math.min(100, (this.state.brushSize || 10) + 1);
+            this.updateBrushSizeDisplay();
         }
-        
-        this.strokeCanvas = null;
-        this.strokeCtx = null;
-        this.brushLayer = null;
     }
     
-    drawAt(pos) {
-        if (!this.strokeCtx) return;
-        
-        this.strokeCtx.fillStyle = this.brushColor;
-        this.strokeCtx.beginPath();
-        this.strokeCtx.arc(pos.x, pos.y, this.brushSize / 2, 0, Math.PI * 2);
-        this.strokeCtx.fill();
-    }
-    
-    drawLine(from, to) {
-        if (!this.strokeCtx) return;
-        
-        const dx = to.x - from.x;
-        const dy = to.y - from.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        const steps = Math.max(1, distance / (this.brushSize / 4));
-        
-        for (let i = 0; i <= steps; i++) {
-            const t = i / steps;
-            const x = from.x + dx * t;
-            const y = from.y + dy * t;
-            this.drawAt({ x, y });
-        }
-    }
-    
-    setBrushSize(size) {
-        this.brushSize = size;
-        this.updateBrushTip();
-    }
-    
-    setBrushColor(color) {
-        this.brushColor = color;
-    }
-    
-    setBrushOpacity(opacity) {
-        this.brushOpacity = opacity;
-        this.updateBrushTip();
+    updateBrushSizeDisplay() {
+        const display = document.getElementById('brush-size-value');
+        const slider = document.getElementById('brush-size');
+        if (display) display.textContent = this.state.brushSize;
+        if (slider) slider.value = this.state.brushSize;
     }
 }
 
-if (typeof window !== 'undefined') {
-    window.BrushTool = BrushTool;
-}
+window.BrushTool = BrushTool;

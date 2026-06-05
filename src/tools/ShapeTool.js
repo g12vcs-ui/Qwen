@@ -1,111 +1,123 @@
-/**
- * Shape Tool - For adding geometric shapes
- */
+// PixelForge - Shape Tool
 
 class ShapeTool extends BaseTool {
-    constructor(editor) {
-        super('shape', editor);
-        this.cursor = 'crosshair';
-        
-        this.isDrawing = false;
-        this.startPos = { x: 0, y: 0 };
+    constructor(canvasManager) {
+        super('shape', canvasManager);
         this.currentShape = null;
-        
-        // Default shape properties
-        this.shapeType = 'rectangle';
-        this.defaultShape = {
-            fillColor: '#6366f1',
-            strokeColor: null,
-            strokeWidth: 0,
-            cornerRadius: 0,
-        };
+        this.shapeType = 'rect'; // rect, ellipse, polygon
     }
     
     onActivate() {
-        // Could show shape options panel here
+        // Could show shape type selector
+    }
+    
+    onDeactivate() {
+        this.currentShape = null;
+    }
+    
+    getCursorStyle() {
+        return 'crosshair';
     }
     
     setShapeType(type) {
         this.shapeType = type;
     }
     
-    onPointerDown(event) {
-        if (event.button !== 0) return;
+    onPointerDown(e, x, y) {
+        super.onPointerDown(e, x, y);
         
-        const pos = this.getCanvasCoordinates(event);
-        this.isDrawing = true;
-        this.startPos = pos;
+        const fillColor = this.state.fillColor || '#3b82f6';
+        const strokeColor = this.state.strokeColor || null;
         
-        const LayerClass = window.Layer || Layer;
-        
-        // Create new shape layer
-        this.currentShape = new LayerClass({
+        this.currentShape = new Layer({
             type: 'shape',
-            name: `Shape (${this.shapeType})`,
-            x: pos.x,
-            y: pos.y,
+            name: this.shapeType.charAt(0).toUpperCase() + this.shapeType.slice(1),
+            x: x,
+            y: y,
             width: 0,
             height: 0,
+            fillColor: fillColor,
+            strokeColor: strokeColor,
+            strokeWidth: 2,
             shapeType: this.shapeType,
-            ...this.defaultShape,
+            cornerRadius: 0
         });
         
-        this.editor.history.saveState('Add Shape');
-        this.state.addLayer(this.currentShape);
+        if (this.shapeType === 'polygon') {
+            this.currentShape.points = [
+                { x: 0.5, y: 0 },
+                { x: 1, y: 0.5 },
+                { x: 0.5, y: 1 },
+                { x: 0, y: 0.5 }
+            ];
+        }
     }
     
-    onPointerMove(event) {
-        if (!this.isDrawing || !this.currentShape) return;
+    onPointerMove(e, x, y) {
+        super.onPointerMove(e, x, y);
         
-        const pos = this.getCanvasCoordinates(event);
-        const modifiers = this.getModifiers(event);
+        if (!this.isDragging || !this.currentShape) return;
         
-        let x = Math.min(this.startPos.x, pos.x);
-        let y = Math.min(this.startPos.y, pos.y);
-        let width = Math.abs(pos.x - this.startPos.x);
-        let height = Math.abs(pos.y - this.startPos.y);
+        const dx = x - this.startX;
+        const dy = y - this.startY;
         
-        // Maintain aspect ratio with shift
-        if (modifiers.shift && this.shapeType !== 'line') {
-            const size = Math.max(width, height);
-            width = size;
-            height = size;
-            
-            // Adjust position to maintain start point
-            if (pos.x < this.startPos.x) x = this.startPos.x - size;
-            if (pos.y < this.startPos.y) y = this.startPos.y - size;
+        // Handle negative dimensions
+        if (dx < 0) {
+            this.currentShape.x = this.startX;
+            this.currentShape.width = Math.abs(dx);
+        } else {
+            this.currentShape.width = dx;
         }
         
-        this.currentShape.x = x;
-        this.currentShape.y = y;
-        this.currentShape.width = Math.max(1, width);
-        this.currentShape.height = Math.max(1, height);
-        this.currentShape.touch();
+        if (dy < 0) {
+            this.currentShape.y = this.startY;
+            this.currentShape.height = Math.abs(dy);
+        } else {
+            this.currentShape.height = dy;
+        }
+        
+        // Maintain aspect ratio with Shift
+        if (e.shiftKey) {
+            const size = Math.max(this.currentShape.width, this.currentShape.height);
+            this.currentShape.width = size;
+            this.currentShape.height = size;
+            
+            if (dx < 0 && dy < 0) {
+                this.currentShape.x = this.startX;
+                this.currentShape.y = this.startY;
+            } else if (dx < 0) {
+                this.currentShape.x = this.startX;
+            } else if (dy < 0) {
+                this.currentShape.y = this.startY;
+            }
+        }
+        
+        this.currentShape.dirty = true;
+        this.canvasManager.render();
     }
     
-    onPointerUp(event) {
-        if (!this.isDrawing) return;
+    onPointerUp(e, x, y) {
+        super.onPointerUp(e, x, y);
         
-        this.isDrawing = false;
+        if (this.currentShape && this.currentShape.width > 5 && this.currentShape.height > 5) {
+            this.state.addLayer(this.currentShape);
+            this.canvasManager.render();
+        }
+        
         this.currentShape = null;
     }
     
-    onKeyDown(event) {
-        // Delete selected shape layers
-        if ((event.key === 'Delete' || event.key === 'Backspace') && !this.isDrawing) {
-            const selectedLayers = this.state.getSelectedLayers();
-            if (selectedLayers.length > 0) {
-                this.editor.history.saveState('Delete Shape');
-                selectedLayers.forEach(layer => {
-                    if (layer.type === 'shape') {
-                        this.state.removeLayer(layer.id);
-                    }
-                });
-            }
+    onKeyDown(e) {
+        // Quick shape type switching
+        switch (e.key.toLowerCase()) {
+            case 'r':
+                this.shapeType = 'rect';
+                break;
+            case 'e':
+                this.shapeType = 'ellipse';
+                break;
         }
     }
 }
 
-if (typeof window !== 'undefined') {
-    window.ShapeTool = ShapeTool;
-}
+window.ShapeTool = ShapeTool;

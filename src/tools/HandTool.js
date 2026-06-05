@@ -1,57 +1,64 @@
-/**
- * Hand Tool - For panning the viewport
- */
+// PixelForge - Hand Tool (Pan)
 
 class HandTool extends BaseTool {
-    constructor(editor) {
-        super('hand', editor);
-        this.cursor = 'grab';
-        
-        this.isPanning = false;
-        this.panStart = { x: 0, y: 0 };
+    constructor(canvasManager) {
+        super('hand', canvasManager);
     }
     
     onActivate() {
-        this.editor.canvas.style.cursor = 'grab';
+        this.canvasManager.setCursor('grab');
     }
     
-    onPointerDown(event) {
-        if (event.button !== 0 && event.button !== 1) return; // Left or middle click
-        
-        this.isPanning = true;
-        this.panStart = {
-            x: event.clientX - this.state.panX,
-            y: event.clientY - this.state.panY,
-        };
-        this.editor.canvas.style.cursor = 'grabbing';
-        event.preventDefault();
+    onDeactivate() {
+        this.canvasManager.setCursor('default');
     }
     
-    onPointerMove(event) {
-        if (!this.isPanning) return;
-        
-        const newPanX = event.clientX - this.panStart.x;
-        const newPanY = event.clientY - this.panStart.y;
-        
-        this.state.panX = newPanX;
-        this.state.panY = newPanY;
-        
-        this.state.emit('viewportChanged');
+    getCursorStyle() {
+        return this.isDragging ? 'grabbing' : 'grab';
     }
     
-    onPointerUp(event) {
-        this.isPanning = false;
-        this.editor.canvas.style.cursor = 'grab';
+    onPointerDown(e, x, y) {
+        super.onPointerDown(e, x, y);
+        this.startPanX = this.state.panX;
+        this.startPanY = this.state.panY;
+        this.canvasManager.setCursor('grabbing');
     }
     
-    onPointerLeave(event) {
-        if (this.isPanning) {
-            this.isPanning = false;
-            this.editor.canvas.style.cursor = 'grab';
+    onPointerMove(e, x, y) {
+        super.onPointerMove(e, x, y);
+        
+        if (!this.isDragging) return;
+        
+        const dx = x - this.lastX;
+        const dy = y - this.lastY;
+        
+        this.state.setPan(this.startPanX + dx, this.startPanY + dy);
+    }
+    
+    onPointerUp(e, x, y) {
+        super.onPointerUp(e, x, y);
+        this.canvasManager.setCursor('grab');
+    }
+    
+    onKeyDown(e) {
+        // Pan with arrow keys
+        const step = e.shiftKey ? 50 : 10;
+        
+        switch (e.key) {
+            case 'ArrowUp':
+                this.state.setPan(this.state.panX, this.state.panY + step);
+                break;
+            case 'ArrowDown':
+                this.state.setPan(this.state.panX, this.state.panY - step);
+                break;
+            case 'ArrowLeft':
+                this.state.setPan(this.state.panX + step, this.state.panY);
+                break;
+            case 'ArrowRight':
+                this.state.setPan(this.state.panX - step, this.state.panY);
+                break;
         }
     }
 }
 
-if (typeof window !== 'undefined') {
-    window.HandTool = HandTool;
-}
+window.HandTool = HandTool;
